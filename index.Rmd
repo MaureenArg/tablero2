@@ -1,0 +1,783 @@
+---
+title: "Denuncias Ambientales en Costa Rica"
+output: 
+  flexdashboard::flex_dashboard:
+  orientation: rows
+runtime: shiny    
+---
+  
+```{r setup, include=FALSE}
+library(flexdashboard)
+```
+
+```{r paquetes, warning=FALSE, message=FALSE}
+library(dplyr)
+library(sf)
+library(terra)
+library(raster)
+library(rgdal)
+library(DT)
+library(plotly)
+library(leaflet)
+library(leafem)
+library(leaflet.extras)
+library(shiny)
+library (ggplot2)
+library (plotly)
+```
+
+
+```{r datos, warning=FALSE, message=FALSE}
+
+# capa vectorial (GeoJSON) de provincias de Costa Rica
+provincias <-
+  st_read(
+    "https://github.com/tpb728O-programaciongeoespacialr/2021ii/raw/main/datos/ign/delimitacion-territorial-administrativa/provincias.geojson",
+    quiet = TRUE
+  )
+# Transformación del CRS  provincias
+provincias <-
+  provincias %>%
+  st_transform (4326)
+
+```
+
+```{r warning=FALSE, message=FALSE}
+# archivo CSV con registros de denuncias
+denu_depu <-
+  st_read(
+    "/vsicurl/https://raw.githubusercontent.com/MaureenArg/datostarea/master/denucdepu.csv",
+    options = c(
+      "X_POSSIBLE_NAMES=decimalLon",
+      "Y_POSSIBLE_NAMES=decimalLat"
+    ),
+    quiet = TRUE
+  )
+
+# Asignación de un CRS a capa denuncias
+st_crs (denu_depu) <- 4326
+
+```
+
+```{r}
+altitud <-
+  rast(
+    "/vsicurl/https://raw.githubusercontent.com/tpb728O-programaciongeoespacialr/2021ii/master/datos/worldclim/altitud.tif"
+  )
+```
+
+```{r}
+denuncias2021 <-
+read.csv (
+  file= "https://raw.githubusercontent.com/MaureenArg/datostarea/master/denunciasoct23.csv", 
+ sep = ";"
+    )
+```
+
+```{r}
+asp <-
+  st_read(
+    "https://raw.githubusercontent.com/tpb728O-programaciongeoespacialr/2021ii/main/datos/sinac/areas-silvestres-protegidas-simplificadas_100m.geojson",
+    quiet = TRUE
+  )
+```
+
+```{r}
+red_vial <-
+  st_read(
+    "https://raw.githubusercontent.com/tpb728O-programaciongeoespacialr/2021ii/main/datos/ign/infraestructura/redvial-simplificadas_500m.geojson",
+    quiet = TRUE
+  )
+```
+
+```{r}
+rios <-
+  st_read(
+    "https://raw.githubusercontent.com/MaureenArg/datostarea/master/rios.geojson",
+    quiet = TRUE
+  )
+```
+
+
+```{r warning=FALSE, message=FALSE}
+# Lista ordenada de denuncias + "Todas"
+lista_denuncias <- unique(denu_depu$TIPO_den)
+lista_denuncias <- sort(lista_denuncias)
+lista_denuncias <- c("Todas", lista_denuncias)
+
+# Lista ordenada de provincias + "Todas"
+lista_provincias <- unique(denu_depu$Provincia)
+lista_provincias <- sort(lista_provincias)
+lista_provincias <- c("Todas", lista_provincias)
+```
+
+# Información general 
+
+Column {.sidebar}
+-----------------------------------------------------------------------
+ 
+```{r filtros}
+
+h3 ("Filtros")
+
+
+selectInput(
+  inputId = "denuncias",
+  label = "Tipo denuncia",
+  choices = lista_denuncias,
+  selected = "Todas"
+)
+selectInput(
+  inputId = "provincia",
+  label = "Provincia",
+  choices = lista_provincias,
+  selected = "Todas"
+)
+
+filtrarRegistros <- reactive({
+  # Remoción de geometrías y selección de columnas
+  denuncias_filtrado <-
+    denu_depu %>%
+    dplyr::select(TIPO_den, TIPO_inf, año, Provincia)
+  
+  # Filtrado de denuncias por tipo
+  if (input$denuncias != "Todas") {
+    denuncias_filtrado <-
+      denuncias_filtrado %>%
+      filter(TIPO_den == input$denuncias)
+  }
+  
+  # Filtrado de denuncias por provincia
+  if (input$provincia != "Todas") {
+    denuncias_filtrado <-
+      denuncias_filtrado %>%
+      filter(Provincia == input$provincia)
+  }
+  
+  
+  
+  return (denuncias_filtrado)
+})
+```
+ 
+ 
+ 
+ 
+
+Row {data-width=600}
+-----------------------------------------------------------------------
+  
+### Mapa de distribución de denuncias ambientales en Costa Rica (2018-2019)
+  
+```{r mapa, warning=FALSE}
+renderLeaflet({
+  registros <-
+    filtrarRegistros()
+  # Conversión del capa altitud a la clase RasterLayer
+  altitud_rl <- raster::raster(altitud)
+  # Mapa Leaflet con capas de provincias y denuncias
+  leaflet() %>%
+    setView(lng = -84.19452,
+            lat = 9.572735,
+            zoom = 7) %>%
+    addTiles(group = "OSM") %>%
+    addProviderTiles("Esri", group = "Esri") %>%
+    addRasterImage(altitud_rl,group = "Altitud",
+                   opacity = 0.6) %>%
+    # Overlay groups
+    addPolygons(
+      data = provincias,
+      group= "Provincias",
+      color = "red",
+      fillColor = "grey",
+      stroke = TRUE, 
+      weight = 1.0,
+    ) %>%
+    addCircleMarkers(
+      data = registros, group = "Denuncias Ambientales" , 
+      stroke = TRUE,
+      radius = 4,
+      fillColor = 'red',
+      fillOpacity = 1,
+      label = paste0(
+        registros$denuncias,
+        ", ",
+        registros$Provincia
+        
+      ),
+      popup = paste0(
+        "<strong> Detalle de la Denuncia: </strong>",
+        "<em>",
+        "<br>",
+        registros$TIPO_inf,
+        "</em>",
+        "<br>",
+        "<strong> Tipo de Denuncia: </strong>",
+        "<em>",
+        "<br>",
+        registros$TIPO_den,
+        "</em>",
+        "<br>",
+        "<strong>Provincia: </strong>",
+        registros$Provincia,
+        "<br>"
+        
+      )
+    ) %>%
+    addSearchOSM() %>%
+    addResetMapButton() %>%
+    addMouseCoordinates () %>%
+    addLayersControl(baseGroups = c ("OSM", "Esri", "Altitud"), overlayGroups = c ("Provincias", "Denuncias Ambientales"), options = layersControlOptions(collapsed = TRUE))%>%
+    addScaleBar("bottomright")  
+}) 
+```
+
+  
+
+
+
+### Cantidad de denuncias ambientales en Costa Rica en el periodo 2018-2019
+
+```{r grafico}
+
+
+renderPlotly({
+  registros <- filtrarRegistros()
+  
+  # Gráfico de denuncias ambientales
+  registros %>%
+    st_drop_geometry() %>%
+    group_by(TIPO_den) %>%
+    summarize(suma_registros = n()) %>%
+    filter(!is.na(TIPO_den))  %>%
+    plot_ly(
+      x = ~ TIPO_den,
+      y = ~ suma_registros,
+      type = "bar",
+      mode = "markers",
+      fill = "tozeroy",
+      color = I ("blue")
+    ) %>%
+    layout(title = "Cantidad de denuncias ambientales en 2018 y 2019", xaxis = list(title = "Tipo de denuncias"),
+           yaxis = list(title = "Cantidad de denuncias ambientales"))
+})
+
+
+```
+
+Row {data-width=400}
+-----------------------------------------------------------------------
+  
+###  Registros de denuncias ambientales en Costa Rica (2018-2019)
+  
+  
+
+```{r tablas}
+renderDT({
+  registros <- filtrarRegistros()
+  
+  registros %>%
+    st_drop_geometry() %>%
+    datatable(rownames= FALSE, filter= "top", class= "hover cell-border stripe", colnames = c( "Tipo de denuncia", "Detalle de la denuncia", "Año",  "Provincia"), options = list (language = list (url = "//cdn.datatables.net/plug-ins/1.10.11/i18n/Spanish.json"),pageLength = 15, dom = "Bfrtip"))
+})
+```
+
+# Gráficos
+
+Row {data-width=500}
+-----------------------------------------------------------------------
+
+### Comparación del tipo de denuncias por año
+
+```{r}
+Tipos <- c ("Agua", "Aire", "Forestal", "Mineria", "Suelo", "Vida Silvestre" )
+año2018 <- c (48,4,25,49,89,41)
+año2019 <- c (37,20,47,30,88,56)
+data <- data.frame (Tipos, año2018, año2019)
+```
+
+```{r}
+plot_ly (data, x= ~Tipos, y= ~año2018, type = "bar", name = "2018")%>%
+add_trace(y= ~año2019, name= "2019")%>%
+layout (yaxis= list(title="Cantidad"), barmode="group")%>%
+layout (title= "Cantidad de denuncias ambientales por año", xaxis= list (title= "Tipo de denuncia"), yaxis= list (title= "Cantidad de denuncias")) 
+```
+
+Row {data-width=500}
+-----------------------------------------------------------------------
+
+### Total de denuncias ambientales según tipo (2018-2019)
+
+```{r warning=FALSE, message=FALSE}
+denuncias_x_tipo <-
+  denuncias2021 %>%
+  select (afectado, denuncias) %>%
+  group_by (afectado) %>%
+  summarise (denuncias = sum (denuncias))
+```
+
+```{r warning=FALSE, message=FALSE}
+ggplot () + geom_col (
+  data = denuncias_x_tipo, 
+  aes (x = afectado, fill =  afectado, 
+      y = denuncias, fill = "denuncias"), width = 0.9) +
+  ggtitle ("Cantidad de denuncias según tipo 2018-2019") +
+  xlab ("Tipos de denuncias") +
+  ylab ("Cantidad de denuncias") +
+  scale_fill_manual (values = c ("#0000FF", "#CDC0B0", "#458B00","#EEAD0E" ,"#8B7355", "#BF3EFF")) +
+  theme (
+    legend.title = element_blank(), legend.position = "left", plot.title = element_text (size = 13))
+```
+
+
+# Estadísticas 
+
+Column {data-width=350}
+-----------------------------------------------------------------------
+
+### Denuncias registradas a una distancia de 7 km de río Reventazón y Grande de Térraba
+
+```{r}
+provincias1 <-
+  provincias %>%
+  st_transform(crs = 5367)
+  
+rios_imp <-
+  rios %>%
+  filter(NOMBRE == "RIO GRANDE DE TERRABA"| NOMBRE == "RIO REVENTAZON"|NOMBRE == "RIO PACUARE") %>%
+  st_transform(crs = 5367)
+
+
+buffer_rios <-
+  rios_imp %>%
+  st_buffer(dist = 7000)
+
+denu_depu_crt <-
+  denu_depu %>%
+  st_transform(crs = 5367)
+
+
+denuncias_buffer_rios <-
+  st_join (denu_depu_crt, buffer_rios) %>%
+  filter(!is.na(CODIGO))
+  
+
+plot (
+  st_union(buffer_rios),
+  extent = st_bbox(c(xmin = 280000, xmax = 660000, ymin = 880000, ymax= 1250000)),  
+  main = "Denuncias alrededor de ríos Reventazón y Térraba", 
+  axes = TRUE, 
+  col = "grey", 
+  graticule = TRUE
+)  
+
+plot(rios_imp$geometry,
+     col = "blue",
+     add = TRUE)
+
+plot (
+  denuncias_buffer_rios$geometry,
+  pch = 16,
+  col = "red",
+  add = TRUE
+)
+
+plot (provincias1$geometry, add = TRUE)
+
+
+```
+
+
+
+-----------------------------------------------------------------------
+###  Denuncias ambientales registradas a una distancia de 5 km de autopistas/rutas importantes (1, 2, 27, 32, 39,252)
+
+
+
+```{r}
+
+autopistas <-
+  red_vial %>%
+  filter(categoria == "AUTOPISTA")
+
+
+buffer_autopistas <-
+  autopistas %>%
+  st_buffer (dist = 5000)
+
+
+denuncias_buffer_autopistas <-
+  st_join (denu_depu_crt, buffer_autopistas)%>%
+  filter(!is.na(codigo))
+
+plot (
+  st_union( buffer_autopistas),
+  extent = st_bbox(c(xmin = 280000, xmax = 660000, ymin = 880000, ymax= 1250000)), 
+  main = "Denuncias ambientales alrededor de rutas importantes", 
+  axes = TRUE, col = "grey",
+  graticule = TRUE
+)  
+
+plot (autopistas$geometry, col = "dark orange", add= TRUE)
+
+plot (denuncias_buffer_autopistas, pch = 10, col = "red", add = TRUE)
+
+plot (provincias1$geometry, add= TRUE)
+
+
+
+```
+
+
+
+Column {data-width=350}
+-----------------------------------------------------------------------
+
+### Denuncias registradas a una distancia de 7 km de río Reventazón y Grande de Térraba
+
+
+```{r}
+
+
+
+
+plot (
+  st_union(buffer_rios),
+  
+  main = "Denuncias alrededor de ríos Reventazón y Térraba", 
+  axes = TRUE, 
+  col = "grey", 
+  graticule = TRUE
+)  
+
+plot(rios_imp$geometry,
+     col = "blue",
+     add = TRUE)
+
+plot (
+  denuncias_buffer_rios$geometry,
+  pch = 16,
+  col = "red",
+  add = TRUE
+)
+
+plot (provincias1$geometry, add = TRUE)
+
+```
+
+
+
+-----------------------------------------------------------------------
+###  Denuncias ambientales registradas a una distancia de 5 km de autopistas/rutas importantes (1, 2, 27, 32, 39,252)
+
+
+
+```{r}
+plot (
+  st_union( buffer_autopistas),
+ 
+  main = "Denuncias ambientales alrededor de rutas importantes", 
+  axes = TRUE, col = "grey",
+  graticule = TRUE
+)  
+
+plot (autopistas$geometry, col = "dark orange", add= TRUE)
+
+plot (denuncias_buffer_autopistas, pch = 10, col = "red", add = TRUE)
+
+plot (provincias1$geometry, add= TRUE)
+```
+
+
+
+Column {data-width=300}
+-----------------------------------------------------------------------
+### Cantidad de denuncias ambientales alrededor de ríos Reventazón y Grande de Térraba
+
+```{r tabla}
+
+
+  
+  denuncias_buffer_rios %>%
+    st_drop_geometry () %>%
+    filter(!is.na(TIPO) & TIPO != "") %>%
+    group_by(TIPO_inf) %>%
+    summarise (registros = n ()) %>%
+     arrange (desc(registros)) %>%
+    slice (1:10)%>%
+    datatable(rownames= FALSE, colnames = c( "Tipo de denuncia", "Cantidad de denuncias"),options = list (language = list (url = "//cdn.datatables.net/plug-ins/1.10.11/i18n/Spanish.json"), dom = "Bfrtip"))  
+
+
+
+
+```
+
+
+
+### Cantidad de denuncias ambientales alrededor de rutas importantes de Costa Rica
+
+```{r }
+## Cantidad de denuncias ambientales alrededor de autopistas
+
+denuncias_buffer_autopistas %>%
+  st_drop_geometry () %>%
+  filter(!is.na(categoria) & categoria != "") %>%
+  group_by(TIPO_inf) %>%
+  summarise (registros = n ()) %>%
+  arrange (desc(registros)) %>%
+  slice (1:10)%>%
+ datatable(rownames= FALSE, colnames = c( "Tipo de denuncia", "Cantidad de denuncias"),options = list (language = list (url = "//cdn.datatables.net/plug-ins/1.10.11/i18n/Spanish.json"), dom = "Bfrtip"))  
+```
+
+
+
+
+
+# Estadísticas por región 
+
+Column {data-width=300}
+-----------------------------------------------------------------------
+
+### Denuncias ambientales ocurridas en el Pacífico en 2018-2019
+
+```{r}
+# denuncias en el pacifico 
+
+provincias_pacifico <-
+  provincias1 %>%
+  filter(provincia == "Guanacaste" | provincia == "Puntarenas")
+
+denu_depu_crt_pacif <-
+  denu_depu_crt %>%
+  filter(Provincia == "Guanacaste" | Provincia == "Puntarenas")
+
+
+plot(
+  provincias_pacifico$geometry,
+  main = "Denuncias ambientales ocurridas en el Pacífico",
+  extent = st_bbox(c(xmin = 280000, xmax = 660000, ymin = 880000, ymax= 1250000)),  
+  col= "grey", 
+  axes = TRUE,
+  graticule = TRUE)
+
+plot (
+  denu_depu_crt_pacif$geometry, 
+  col = "red",
+  add= TRUE
+  
+)
+
+```
+
+
+
+Row {data-width=200}
+-----------------------------------------------------------------------
+### 10 tipos de denuncias ambientales ocurridas con más frecuencia en el Pacífico
+
+```{r}
+# 10 tipos de denuncias ambientales más ocurridas en el Pacífico 
+
+ h3 ("Los 10 tipos de denuncias ambientales ocurridas con más frecuencia en el Pacífico")
+
+denu_depu_crt_pacif%>%
+  st_drop_geometry()%>%
+  group_by(TIPO_inf)%>%
+  summarise (registros = n ()) %>%
+  arrange (desc(registros)) %>%
+  slice (1:10) %>%
+datatable(rownames= FALSE, colnames = c( "Tipo de denuncia", "Cantidad de denuncias"), options = list (language = list (url = "//cdn.datatables.net/plug-ins/1.10.11/i18n/Spanish.json"), dom = "Bfrtip"))  
+```
+
+
+
+
+
+
+
+Column {data-width=300}
+-----------------------------------------------------------------------
+###  Denuncias ambientales ocurridas en el Caribe en 2018-2019
+
+```{r}
+# denuncias en el caribe
+
+provincias_caribe <-
+  provincias1 %>%
+  filter(provincia == "Limón")
+
+denu_depu_crt_caribe <-
+  denu_depu_crt %>%
+  filter(Provincia == "Limón")
+
+
+plot(
+  provincias_caribe$geometry,
+  main = "Denuncias ambientales ocurridas en el Caribe",
+  extent = st_bbox(c(xmin = 500000, xmax = 660000, ymin = 990000, ymax= 1250000)), 
+  col= "green", 
+  axes = TRUE,
+  graticule = TRUE)
+
+plot (
+  denu_depu_crt_caribe$geometry, 
+  col = "red",
+  add= TRUE
+  
+)
+
+```
+
+ Row {data-width=200}
+-----------------------------------------------------------------------
+
+### 10 tipos de denuncias ambientales ocurridas con más frecuencia el Caribe 
+
+```{r}
+# 10 tipos de denuncias ambientales más ocurridas en el Caribe  
+
+ h3 ("Las 10 tipos de denuncias ambientales ocurridas con más frecuencia en el Caribe")
+
+denu_depu_crt_caribe%>%
+  st_drop_geometry()%>%
+  group_by(TIPO_inf)%>%
+  summarise (registros = n ()) %>%
+  arrange (desc(registros)) %>%
+  slice (1:10)%>%
+  datatable(rownames= FALSE, colnames = c( "Tipo de denuncia", "Cantidad de denuncias"), options = list (language = list (url = "//cdn.datatables.net/plug-ins/1.10.11/i18n/Spanish.json"), dom = "Bfrtip"))
+
+```
+
+
+
+# Denuncias Ambientales según tipo de provincias (costeras/no costeras)
+
+Column {data-width=300}
+-----------------------------------------------------------------------
+### Denuncias ambientales en provincias costeras
+
+```{r}
+
+provincias1 <-
+  provincias %>%
+  st_transform(crs = 5367)
+
+F_GAM <-
+  provincias1 %>%
+  filter(provincia == "Puntarenas"| provincia == "Limón"| provincia == "Guanacaste")
+
+denu_depu_FGAM <-
+  denu_depu_crt %>%
+  filter(Provincia == "Limón" | Provincia== "Puntarenas"| Provincia == "Guanacaste")
+
+
+#Mapa
+
+plot (
+  F_GAM$geometry, 
+  main= "Denuncias ambientales en provincias costeras", 
+  extent = st_bbox(c(xmin = 280000, xmax = 660000, ymin = 880000, ymax= 1250000)),
+  col= "green",
+  axes= TRUE, 
+  graticule = TRUE
+)
+
+plot (
+  denu_depu_FGAM$geometry, 
+  pch = 16,
+  col = "red",
+  add= TRUE
+  
+)  
+
+plot (provincias1$geometry, add= TRUE, axes = TRUE)
+```
+
+
+Column {data-width=200}
+-----------------------------------------------------------------------
+### Cantidad de denuncias ambientales en provincias costeras (las 10 más frecuentes)
+```{r}
+## Cantidad de denuncias ambientales en provincias costeras
+
+denu_depu_FGAM %>%
+  st_drop_geometry () %>%
+  
+  group_by(TIPO_inf) %>%
+  summarise (registros = n ()) %>%
+  arrange (desc(registros)) %>%
+  slice (1:10)%>%
+ datatable(rownames= FALSE, colnames = c( "Tipo de denuncia", "Cantidad de denuncias"),options = list (language = list (url = "//cdn.datatables.net/plug-ins/1.10.11/i18n/Spanish.json"), dom = "Bfrtip"))  
+```
+
+
+
+Column {data-width=300}
+-----------------------------------------------------------------------
+### Denuncias ambientales en provincias "no costeras"
+
+```{r}
+
+provincias1 <-
+  provincias %>%
+  st_transform(crs = 5367)
+
+GAM <-
+  provincias1 %>%
+  filter(provincia == "San José" | provincia == "Alajuela"| provincia == "Heredia"| provincia == "Cartago") 
+
+
+denu_depu_GAM <-
+  denu_depu_crt %>%
+  filter(Provincia == "San José" | Provincia== "Alajuela"| Provincia == "Heredia"| Provincia == "Cartago")
+
+
+
+  
+plot (
+  GAM$geometry,
+  main = "Denuncias ambientales en provincias no costeras", 
+  extent = st_bbox(c(xmin = 280000, xmax = 660000, ymin = 880000, ymax= 1250000)),  
+  col= "grey", 
+  axes = TRUE, 
+  graticule = TRUE
+)  
+
+
+
+plot(
+  denu_depu_GAM$geometry,
+  pch = 16,
+  col = "red",
+  add = TRUE
+)
+
+
+
+plot (provincias1$geometry, add = TRUE
+  
+)
+
+
+```
+
+
+
+
+Column {data-width=200}
+-----------------------------------------------------------------------
+### Cantidad de denuncias ambientales en provincias "no costeras" (las 10 más frecuentes)
+
+```{r}
+## Cantidad de denuncias ambientalesen provincias "no costeras"
+
+denu_depu_GAM %>%
+  st_drop_geometry () %>%
+  
+  group_by(TIPO_inf) %>%
+  summarise (registros = n ()) %>%
+  arrange (desc(registros)) %>%
+  slice (1:10)%>%
+ datatable(rownames= FALSE, colnames = c( "Tipo de denuncia", "Cantidad de denuncias"),options = list (language = list (url = "//cdn.datatables.net/plug-ins/1.10.11/i18n/Spanish.json"), dom = "Bfrtip"))  
+```
+
